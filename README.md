@@ -33,8 +33,8 @@ Giữ kiến trúc **1 file `index.html` static, không build, không thêm fram
 5. **Tách tab:** mỗi giá trị (ô) trong KW Map → **1 tab/sheet riêng**, tên = giá trị root (phần trước dấu `/`). Ô 0 KW vẫn tạo tab.
 6. **Chuyển dữ liệu:** copy nguyên dòng (đủ mọi cột) của KW khớp sang tab nhóm tương ứng, đồng thời **gỡ khỏi KW Raw**. KW không khớp → **giữ nguyên** trong KW Raw (leftover).
 7. **Phân loại cấp 2 (trong từng tab):** coi mỗi tab giá trị là pool mới, rút gọn mỗi KW thành **root con**:
-   - **Bỏ term chính của tab** (tên tab, vd `card`), rồi bỏ *stopword* (for/the/with…) + *từ generic* (gift/idea/present); **giữ** từ nhóm Đối tượng (women/men…); **bỏ qua thứ tự từ** (sắp xếp trước khi gom). KW chứa **số** (2 pack, set of 3…) → gộp chung root `number`. KW = đúng term tab → `(không có root phụ)`.
-   - VD tab `Desk`: cả `desk gifts for women office` và `office desk gifts for women` → **`office women`**; tab `Card`: `funny card` → `funny`.
+   - Root con = **chỉ 1 TỪ**. Cách chọn: bỏ **term chính của tab** (tên tab, vd `card`) + *stopword* (for/the/with…) + *từ generic* (gift/idea/present), **giữ** từ Đối tượng. Trong các từ còn lại: **ưu tiên từ có trong KW Map** (tier cao nhất: Seasonal>Product>Function>Đối tượng; hoà → từ xuất hiện nhiều nhất trong tab → A→Z). Không có từ KW Map: nếu có **số** (2 pack, set of 3…) → `number`; còn lại lấy **từ phổ biến nhất**. KW = đúng term tab → `(không có root phụ)`.
+   - VD tab `Calendar`: `desk small flip`, `daily 2026 desk`, `humor desk`… đều chứa `desk` (Product) → gom hết vào root **`desk`**; tab `Card`: `funny card` → `funny`. (Muốn tách theme riêng như `affirmation` → thêm từ đó vào KW Map.)
    - Mỗi root con **gán 1 trong 4 nhóm bằng KW Map hiện có**; root không khớp xếp **cuối** (không gắn nhãn). Root con **xếp theo thứ tự 4 nhóm**, trong nhóm **volume giảm dần** (tự dò cột `Volume/Volumes/Search Volume/Search Volumes`; không có thì theo số KW), hoà thì A→Z. KW bên trong mỗi root con cũng **volume giảm dần**.
    - Hiển thị dạng **gập** (mặc định gập sẵn), bấm root con → xổ ra KW. Có **toggle bật/tắt cấp 2** (tắt → xem phẳng như cũ). **Không tạo tab mới, không thêm cột.**
 

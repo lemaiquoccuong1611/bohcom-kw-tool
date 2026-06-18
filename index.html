@@ -479,11 +479,11 @@ function fillKw(){
 }
 
 /* ============================ Cấp 2: tách root phụ trong mỗi tab (không tạo tab mới) ============================ */
-// Từ "rác" rút gọn root con (dạng canon): stopword + từ generic quà tặng. Giữ từ nhóm Đối tượng.
+// Từ "rác" loại khỏi root con (dạng canon): stopword + từ generic quà tặng. Giữ từ nhóm Đối tượng.
 const SUB_STOP=new Set(["for","the","a","an","and","or","with","to","of","in","on","by","your","you","my","that","this"]);
 const SUB_GENERIC=new Set(["gift","idea","present"]); // canon: gifts→gift, ideas→idea, presents→present
-// Bỏ term chung của tab (ưu tiên bỏ TERM CHÍNH = tên tab) → bỏ rác → gộp số về "number" → sắp xếp từ (bỏ qua thứ tự) = "root con".
-function subRootOf(kw, cell){
+// Token đã làm sạch của 1 KW: bỏ TERM CHÍNH của tab (tên tab) + stopword + generic; giữ từ Đối tượng.
+function cleanTokens(kw, cell){
   const kt=canon(kw);
   const parts=(cell||"").split("/").map(v=>canon(v)).filter(t=>t.length);
   const primary=parts[0]||[];
@@ -494,26 +494,46 @@ function subRootOf(kw, cell){
     for(let i=0;i+m<=rest.length;i++){let ok=true;for(let j=0;j<m;j++){if(rest[i+j]!==tt[j]){ok=false;break;}}if(ok){at=i;break;}}
     if(at>=0){ rest=rest.slice(0,at).concat(rest.slice(at+m)); break; }
   }
-  rest=rest.filter(w=>!SUB_STOP.has(w) && !SUB_GENERIC.has(w));   // bỏ stopword + từ generic
-  if(rest.some(w=>/^[0-9]+$/.test(w))) return "number";          // có số (2 pack, set of 3…) → gộp chung "number"
-  rest.sort();                                                     // bỏ qua thứ tự → gom chung
-  return rest.join(" ");
+  return rest.filter(w=>!SUB_STOP.has(w) && !SUB_GENERIC.has(w));
 }
-// Gán root phụ vào 1 trong 4 nhóm bằng KW Map hiện có (null nếu chưa khớp).
-function subTierOf(rootStr){ return rootStr ? classifyKW(rootStr, state.map).tier : null; }
+// Tier của 1 token theo KW Map (null nếu không khớp).
+function tokenTier(tok){ return classifyKW(tok, state.map).tier; }
 // Tự dò cột volume theo tên: Volume / Volumes / Search Volume / Search Volumes. null nếu không có.
 function detectVolCol(){
   const want=["volume","volumes","search volume","search volumes"];
   return state.columns.find(c=>want.includes(String(c).trim().toLowerCase())) || null;
 }
 function toNum(v){ const n=parseFloat(String(v??"").replace(/[^0-9.\-]/g,"")); return isNaN(n)?0:n; }
-// Gom các dòng trong 1 tab theo root con; xếp theo thứ tự 4 nhóm, trong mỗi nhóm theo volume tăng dần.
+// Gom các dòng trong 1 tab theo root con (CHỈ 1 TỪ): ưu tiên từ có trong KW Map (tier cao nhất → tần suất → A-Z);
+// không có từ KW Map: có số → "number", còn lại lấy từ phổ biến nhất. Xếp theo 4 nhóm, volume giảm dần.
 function subGroupsOf(sh){
   const volCol=detectVolCol();
+  // token sạch từng KW + tần suất token trong tab (mỗi KW đếm 1 lần/token)
+  const freq=new Map();
+  const toks=sh.idxs.map(ix=>{
+    const t=cleanTokens(state.rows[ix][state.keyCol], sh.cell);
+    new Set(t).forEach(w=>freq.set(w,(freq.get(w)||0)+1));
+    return t;
+  });
+  const tierRank=t=>{const i=PRIORITY.indexOf(t); return i<0?99:i;};
+  function pickRoot(tokens){
+    if(!tokens.length) return "";
+    let best=null,bestTier=99,bestFreq=-1;            // ưu tiên từ có trong KW Map
+    for(const w of tokens){
+      const ti=tierRank(tokenTier(w)); if(ti===99) continue;
+      const f=freq.get(w)||0;
+      if(ti<bestTier || (ti===bestTier && (f>bestFreq || (f===bestFreq && (best===null||w<best))))){best=w;bestTier=ti;bestFreq=f;}
+    }
+    if(best) return best;
+    if(tokens.some(w=>/^[0-9]+$/.test(w))) return "number";   // có số → gộp "number"
+    let bw=null,bf=-1;                                 // rơi về từ phổ biến nhất
+    for(const w of tokens){const f=freq.get(w)||0; if(f>bf||(f===bf&&(bw===null||w<bw))){bw=w;bf=f;}}
+    return bw||"";
+  }
   const m=new Map();
-  sh.idxs.forEach(ix=>{
-    const root=subRootOf(state.rows[ix][state.keyCol], sh.cell);
-    if(!m.has(root)) m.set(root,{root,tier:subTierOf(root),idxs:[],vol:0});
+  sh.idxs.forEach((ix,k)=>{
+    const root=pickRoot(toks[k]);
+    if(!m.has(root)) m.set(root,{root,tier:(root?classifyKW(root,state.map).tier:null),idxs:[],vol:0});
     const g=m.get(root); g.idxs.push(ix);
     if(volCol) g.vol+=toNum(state.rows[ix][volCol]);
   });
