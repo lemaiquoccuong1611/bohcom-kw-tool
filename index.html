@@ -236,16 +236,9 @@ function exportExcel(){
   for(let i=0;i<maxLen;i++) aoa.push(colVals.map(c=>c[i]??""));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),"KW Map");
   if(state.result){
-    const C_ROOT="Root phụ", C_GRP="Nhóm phụ";
-    const subHeader=state.columns.concat([C_ROOT,C_GRP]);
     state.result.sheets.forEach(sh=>{
-      const sub=sh.idxs.map(i=>{
-        const row=state.rows[i];
-        const root=subRootOf(row[state.keyCol],sh.cell);
-        const tier=subTierOf(root);
-        return Object.assign({},row,{[C_ROOT]:root,[C_GRP]:tier?byKey(tier).col:"Chưa khớp"});
-      });
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:subHeader}),sh.sheetName);
+      const sub=sh.idxs.map(i=>state.rows[i]);
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:state.columns}),sh.sheetName);
     });
   }
   XLSX.writeFile(wb,(state.fileName.replace(/\.(xlsx|xls|csv)$/i,"")||"keywords")+"_export.xlsx");
@@ -481,15 +474,24 @@ function subRootOf(kw, cell){
 }
 // Gán root phụ vào 1 trong 4 nhóm bằng KW Map hiện có (null nếu chưa khớp).
 function subTierOf(rootStr){ return rootStr ? classifyKW(rootStr, state.map).tier : null; }
-// Gom các dòng trong 1 tab theo root phụ (sắp theo số lượng giảm dần).
+// Tự dò cột volume (Search Volume / Volume / searches…). null nếu không có.
+function detectVolCol(){ return state.columns.find(c=>/volume|searches|search\s*vol/i.test(c)) || null; }
+function toNum(v){ const n=parseFloat(String(v??"").replace(/[^0-9.\-]/g,"")); return isNaN(n)?0:n; }
+// Gom các dòng trong 1 tab theo root con; xếp theo thứ tự 4 nhóm, trong mỗi nhóm theo volume tăng dần.
 function subGroupsOf(sh){
+  const volCol=detectVolCol();
   const m=new Map();
   sh.idxs.forEach(ix=>{
     const root=subRootOf(state.rows[ix][state.keyCol], sh.cell);
-    if(!m.has(root)) m.set(root,{root,tier:subTierOf(root),idxs:[]});
-    m.get(root).idxs.push(ix);
+    if(!m.has(root)) m.set(root,{root,tier:subTierOf(root),idxs:[],vol:0});
+    const g=m.get(root); g.idxs.push(ix);
+    if(volCol) g.vol+=toNum(state.rows[ix][volCol]);
   });
-  return [...m.values()].sort((a,b)=> b.idxs.length-a.idxs.length || a.root.localeCompare(b.root));
+  const rank=t=>{const i=TIER_ORDER.indexOf(t); return i<0?TIER_ORDER.length:i;};
+  const groups=[...m.values()];
+  groups.forEach(g=>g.sortKey=volCol?g.vol:g.idxs.length);
+  groups.sort((a,b)=> rank(a.tier)-rank(b.tier) || a.sortKey-b.sortKey || a.root.localeCompare(b.root));
+  return groups;
 }
 
 function renderSingleSheet(panel, i){
@@ -508,9 +510,10 @@ function renderSingleSheet(panel, i){
     const b0=document.getElementById("btnExport"); if(b0) b0.addEventListener("click",exportExcel);
     return;
   }
+  const volCol=detectVolCol();
   const groups=subGroupsOf(sh);
   h+='<div class="text-xs text-slate-500 flex items-center gap-2 pt-1 flex-wrap">'+
-     '<span>Cấp 2 — gom theo <b>root phụ</b> ('+groups.length+' nhóm; đã bỏ term chung "'+esc(sh.name)+'")</span>'+
+     '<span>Cấp 2 — <b>root con</b> ('+groups.length+'); đã bỏ term chung "'+esc(sh.name)+'" · xếp theo 4 nhóm, '+(volCol?'volume':'số KW')+' tăng dần</span>'+
      '<button id="subToggleAll" class="ml-auto text-slate-500 hover:text-slate-700 underline">Mở/Thu tất cả</button></div>';
   h+='<div class="space-y-1.5">';
   groups.forEach((g,gi)=>{
@@ -523,7 +526,7 @@ function renderSingleSheet(panel, i){
          '<span class="subcaret text-slate-400 text-xs w-3 inline-block">▸</span>'+
          '<span class="font-medium text-slate-800">'+esc(label)+'</span>'+
          '<span class="px-2 py-0.5 rounded-full text-[11px] font-medium '+badge+'">'+esc(gcol)+'</span>'+
-         '<span class="ml-auto text-xs text-slate-400">'+g.idxs.length.toLocaleString()+' KW</span>'+
+         '<span class="ml-auto text-xs text-slate-400">'+g.idxs.length.toLocaleString()+' KW'+(volCol?' · vol '+Math.round(g.vol).toLocaleString():'')+'</span>'+
        '</button>'+
        '<div class="subbody hidden border-t border-slate-100 scroll" style="max-height:45vh" data-sub="'+gi+'">'+
          kwTableHTML(g.idxs.map(ix=>state.rows[ix]),state.columns)+

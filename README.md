@@ -32,7 +32,7 @@ Giữ kiến trúc **1 file `index.html` static, không build, không thêm fram
 4. **Chạy phân loại:** đọc từng `Keyword Phrase`, gán mỗi KW vào **đúng 1 nhóm** theo thứ tự ưu tiên (mục 3).
 5. **Tách tab:** mỗi giá trị (ô) trong KW Map → **1 tab/sheet riêng**, tên = giá trị root (phần trước dấu `/`). Ô 0 KW vẫn tạo tab.
 6. **Chuyển dữ liệu:** copy nguyên dòng (đủ mọi cột) của KW khớp sang tab nhóm tương ứng, đồng thời **gỡ khỏi KW Raw**. KW không khớp → **giữ nguyên** trong KW Raw (leftover).
-7. **Phân loại cấp 2 (trong từng tab):** coi mỗi tab giá trị là pool mới, **bỏ term chung của tab** khỏi mỗi KW để lấy **root phụ** (vd tab `Card`: `funny card` → `funny`). Gom các dòng theo root phụ (hiển thị **gập** — bấm mới xổ KW xuống), mỗi root phụ được **gán 1 trong 4 nhóm bằng KW Map hiện có** (lạ → "Chưa khớp"). **Không tạo tab mới.**
+7. **Phân loại cấp 2 (trong từng tab):** coi mỗi tab giá trị là pool mới, **bỏ term chung của tab** khỏi mỗi KW để lấy **root con** (vd tab `Card`: `funny card` → `funny`, `affirmation card` → `affirmation`). Trong tab, hiển thị danh sách root con dạng **gập**; mỗi root con được **gán 1 trong 4 nhóm bằng KW Map hiện có** (lạ → "Chưa khớp"), **xếp theo thứ tự 4 nhóm**, trong mỗi nhóm **theo volume tăng dần** (tự dò cột volume; không có thì theo số KW). Bấm vào root con → **xổ ra các KW** bên trong. **Không tạo tab mới, không thêm cột.**
 
 ---
 
@@ -86,7 +86,7 @@ File Excel xuất ra gồm:
 - `KW Raw` — chỉ còn KW **leftover** (chưa khớp).
 - `KW Raw (Bản sao)` — **đủ toàn bộ** KW gốc, không đụng.
 - `KW Map` — 4 cột nhóm (kèm root ưu tiên ★ ở đúng cột).
-- **1 sheet cho mỗi giá trị** trong KW Map (chứa KW + đủ cột metric), kèm 2 cột cấp 2: **`Root phụ`** và **`Nhóm phụ`**.
+- **1 sheet cho mỗi giá trị** trong KW Map (chứa KW + đủ cột metric, giữ nguyên cột gốc). Phân loại cấp 2 (root con) chỉ hiển thị trên giao diện, **không thêm cột vào Excel**.
 
 **Bất biến đã kiểm chứng (phải luôn đúng):** `matched + leftover = tổng KW`; **không dòng nào ở 2 tab**; mỗi KW matched nằm **đúng 1 tab**.
 
