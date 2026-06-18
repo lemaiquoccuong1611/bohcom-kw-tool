@@ -32,7 +32,11 @@ Giữ kiến trúc **1 file `index.html` static, không build, không thêm fram
 4. **Chạy phân loại:** đọc từng `Keyword Phrase`, gán mỗi KW vào **đúng 1 nhóm** theo thứ tự ưu tiên (mục 3).
 5. **Tách tab:** mỗi giá trị (ô) trong KW Map → **1 tab/sheet riêng**, tên = giá trị root (phần trước dấu `/`). Ô 0 KW vẫn tạo tab.
 6. **Chuyển dữ liệu:** copy nguyên dòng (đủ mọi cột) của KW khớp sang tab nhóm tương ứng, đồng thời **gỡ khỏi KW Raw**. KW không khớp → **giữ nguyên** trong KW Raw (leftover).
-7. **Phân loại cấp 2 (trong từng tab):** coi mỗi tab giá trị là pool mới, **bỏ term chung của tab** khỏi mỗi KW rồi **rút gọn thành root con**: bỏ *stopword* (for/the/with…) + *từ generic* (gift/idea/present), **giữ** từ nhóm Đối tượng (women/men…), và **bỏ qua thứ tự từ** (sắp xếp trước khi gom). VD tab `Desk`: cả `desk gifts for women office` và `office desk gifts for women` → **`office women`**; tab `Card`: `funny card` → `funny`. Trong tab, hiển thị danh sách root con dạng **gập**; mỗi root con được **gán 1 trong 4 nhóm bằng KW Map hiện có** (lạ → "Chưa khớp"), **xếp theo thứ tự 4 nhóm**, trong mỗi nhóm **theo volume tăng dần** (tự dò cột volume; không có thì theo số KW). Bấm vào root con → **xổ ra các KW** bên trong. **Không tạo tab mới, không thêm cột.**
+7. **Phân loại cấp 2 (trong từng tab):** coi mỗi tab giá trị là pool mới, rút gọn mỗi KW thành **root con**:
+   - **Bỏ term chính của tab** (tên tab, vd `card`), rồi bỏ *stopword* (for/the/with…) + *từ generic* (gift/idea/present); **giữ** từ nhóm Đối tượng (women/men…); **bỏ qua thứ tự từ** (sắp xếp trước khi gom). KW chứa **số** (2 pack, set of 3…) → gộp chung root `number`. KW = đúng term tab → `(không có root phụ)`.
+   - VD tab `Desk`: cả `desk gifts for women office` và `office desk gifts for women` → **`office women`**; tab `Card`: `funny card` → `funny`.
+   - Mỗi root con **gán 1 trong 4 nhóm bằng KW Map hiện có**; root không khớp xếp **cuối** (không gắn nhãn). Root con **xếp theo thứ tự 4 nhóm**, trong nhóm **volume giảm dần** (tự dò cột `Volume/Volumes/Search Volume/Search Volumes`; không có thì theo số KW), hoà thì A→Z. KW bên trong mỗi root con cũng **volume giảm dần**.
+   - Hiển thị dạng **gập** (mặc định gập sẵn), bấm root con → xổ ra KW. Có **toggle bật/tắt cấp 2** (tắt → xem phẳng như cũ). **Không tạo tab mới, không thêm cột.**
 
 ---
 
@@ -86,7 +90,7 @@ File Excel xuất ra gồm:
 - `KW Raw` — chỉ còn KW **leftover** (chưa khớp).
 - `KW Raw (Bản sao)` — **đủ toàn bộ** KW gốc, không đụng.
 - `KW Map` — 4 cột nhóm (kèm root ưu tiên ★ ở đúng cột).
-- **1 sheet cho mỗi giá trị** trong KW Map (giữ nguyên cột gốc, **không thêm cột**). Trong sheet, các KW được **gom theo root con** giống giao diện: mỗi root con là 1 hàng tiêu đề (`▸ root · nhóm · n KW · vol`), KW nằm bên dưới và **gom dòng (+/-) để xổ/gập** trong Excel; xếp theo 4 nhóm, volume tăng dần.
+- **1 sheet cho mỗi giá trị** trong KW Map (giữ nguyên cột gốc, **không thêm cột**). Khi bật cấp 2, các KW được **gom theo root con** giống giao diện: mỗi root con là 1 hàng tiêu đề (`▸ root · nhóm · n KW · vol`), KW nằm bên dưới, **gom dòng (+/-) và gập sẵn** trong Excel, **cách 1 dòng** giữa các nhóm; xếp theo 4 nhóm, volume giảm dần. (Tắt cấp 2 → xuất phẳng như cũ.)
 
 **Bất biến đã kiểm chứng (phải luôn đúng):** `matched + leftover = tổng KW`; **không dòng nào ở 2 tab**; mỗi KW matched nằm **đúng 1 tab**.
 

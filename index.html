@@ -136,7 +136,7 @@ function autoSuggestMap(merge){
 const state = {
   fileName:"", columns:[], rows:[], backupRows:[], keyCol:"",
   map:{priority:[],seasonal:[],product:[],function:[],recipient:[]},
-  result:null, active:"", viewSheet:0, search:"", loading:false, error:"",
+  result:null, active:"", viewSheet:0, search:"", loading:false, error:"", sub2:true,
 };
 
 /* ============================ Data helpers ============================ */
@@ -238,19 +238,24 @@ function exportExcel(){
   if(state.result){
     const volCol=detectVolCol();
     state.result.sheets.forEach(sh=>{
-      const groups=subGroupsOf(sh);              // đã xếp theo 4 nhóm + volume tăng dần
+      if(!state.sub2){   // tắt cấp 2 → xuất phẳng như cũ
+        const sub=sh.idxs.map(i=>state.rows[i]);
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:state.columns}),sh.sheetName);
+        return;
+      }
+      const groups=subGroupsOf(sh);              // đã xếp theo 4 nhóm + volume giảm dần
       const aoa=[state.columns.slice()];         // hàng tiêu đề cột gốc
-      const levels=[0];                          // mức outline cho từng hàng
+      const meta=[{}];                           // !rows meta cho từng hàng
       groups.forEach(g=>{
-        const gcol=g.tier?byKey(g.tier).col:"Chưa khớp";
         const label=(g.root||"(không có root phụ)");
         const hrow=new Array(state.columns.length).fill("");
-        hrow[0]="▸ "+label+"  ·  "+gcol+"  ·  "+g.idxs.length+" KW"+(volCol?"  ·  vol "+Math.round(g.vol):"");
-        aoa.push(hrow); levels.push(0);          // hàng tiêu đề root con
-        g.idxs.forEach(ix=>{ const row=state.rows[ix]; aoa.push(state.columns.map(c=>row[c]??"")); levels.push(1); });
+        hrow[0]="▸ "+label+(g.tier?"  ·  "+byKey(g.tier).col:"")+"  ·  "+g.idxs.length+" KW"+(volCol?"  ·  vol "+Math.round(g.vol):"");
+        aoa.push(hrow); meta.push({collapsed:true});   // hàng tiêu đề root con (nút +/-, gập sẵn)
+        g.idxs.forEach(ix=>{ const row=state.rows[ix]; aoa.push(state.columns.map(c=>row[c]??"")); meta.push({level:1,hidden:true}); });
+        aoa.push(new Array(state.columns.length).fill("")); meta.push({});   // cách 1 dòng giữa các nhóm
       });
       const ws=XLSX.utils.aoa_to_sheet(aoa);
-      ws["!rows"]=levels.map(l=>l?{level:1}:{});  // gom KW dưới mỗi root con (nút +/- trong Excel)
+      ws["!rows"]=meta;                           // gom KW dưới mỗi root con, gập sẵn (+/-)
       ws["!outline"]={above:true};
       XLSX.utils.book_append_sheet(wb,ws,sh.sheetName);
     });
@@ -477,24 +482,30 @@ function fillKw(){
 // Từ "rác" rút gọn root con (dạng canon): stopword + từ generic quà tặng. Giữ từ nhóm Đối tượng.
 const SUB_STOP=new Set(["for","the","a","an","and","or","with","to","of","in","on","by","your","you","my","that","this"]);
 const SUB_GENERIC=new Set(["gift","idea","present"]); // canon: gifts→gift, ideas→idea, presents→present
-// Bỏ term chung của tab (theo canon) khỏi 1 KW → bỏ rác → sắp xếp từ (bỏ qua thứ tự) = "root con".
+// Bỏ term chung của tab (ưu tiên bỏ TERM CHÍNH = tên tab) → bỏ rác → gộp số về "number" → sắp xếp từ (bỏ qua thứ tự) = "root con".
 function subRootOf(kw, cell){
   const kt=canon(kw);
-  const variants=(cell||"").split("/").map(v=>canon(v)).filter(t=>t.length).sort((a,b)=>b.length-a.length);
+  const parts=(cell||"").split("/").map(v=>canon(v)).filter(t=>t.length);
+  const primary=parts[0]||[];
+  const order=primary.length?[primary,...parts.slice(1).sort((a,b)=>b.length-a.length)]:parts.slice().sort((a,b)=>b.length-a.length);
   let rest=kt.slice();
-  for(const tt of variants){
+  for(const tt of order){
     const m=tt.length; let at=-1;
     for(let i=0;i+m<=rest.length;i++){let ok=true;for(let j=0;j<m;j++){if(rest[i+j]!==tt[j]){ok=false;break;}}if(ok){at=i;break;}}
     if(at>=0){ rest=rest.slice(0,at).concat(rest.slice(at+m)); break; }
   }
   rest=rest.filter(w=>!SUB_STOP.has(w) && !SUB_GENERIC.has(w));   // bỏ stopword + từ generic
+  if(rest.some(w=>/^[0-9]+$/.test(w))) return "number";          // có số (2 pack, set of 3…) → gộp chung "number"
   rest.sort();                                                     // bỏ qua thứ tự → gom chung
   return rest.join(" ");
 }
 // Gán root phụ vào 1 trong 4 nhóm bằng KW Map hiện có (null nếu chưa khớp).
 function subTierOf(rootStr){ return rootStr ? classifyKW(rootStr, state.map).tier : null; }
-// Tự dò cột volume (Search Volume / Volume / searches…). null nếu không có.
-function detectVolCol(){ return state.columns.find(c=>/volume|searches|search\s*vol/i.test(c)) || null; }
+// Tự dò cột volume theo tên: Volume / Volumes / Search Volume / Search Volumes. null nếu không có.
+function detectVolCol(){
+  const want=["volume","volumes","search volume","search volumes"];
+  return state.columns.find(c=>want.includes(String(c).trim().toLowerCase())) || null;
+}
 function toNum(v){ const n=parseFloat(String(v??"").replace(/[^0-9.\-]/g,"")); return isNaN(n)?0:n; }
 // Gom các dòng trong 1 tab theo root con; xếp theo thứ tự 4 nhóm, trong mỗi nhóm theo volume tăng dần.
 function subGroupsOf(sh){
@@ -508,8 +519,11 @@ function subGroupsOf(sh){
   });
   const rank=t=>{const i=TIER_ORDER.indexOf(t); return i<0?TIER_ORDER.length:i;};
   const groups=[...m.values()];
+  // KW trong mỗi root con: volume giảm dần
+  if(volCol) groups.forEach(g=>g.idxs.sort((a,b)=>toNum(state.rows[b][volCol])-toNum(state.rows[a][volCol])));
+  // root con: theo thứ tự 4 nhóm (chưa khớp cuối), trong nhóm volume giảm dần, hoà thì A→Z
   groups.forEach(g=>g.sortKey=volCol?g.vol:g.idxs.length);
-  groups.sort((a,b)=> rank(a.tier)-rank(b.tier) || a.sortKey-b.sortKey || a.root.localeCompare(b.root));
+  groups.sort((a,b)=> rank(a.tier)-rank(b.tier) || b.sortKey-a.sortKey || a.root.localeCompare(b.root));
   return groups;
 }
 
@@ -518,33 +532,36 @@ function renderSingleSheet(panel, i){
   if(!sh){ panel.innerHTML='<div class="text-slate-400 text-sm">Không tìm thấy sheet.</div>'; return; }
   const c=COLOR[byKey(sh.tier).color];
   const total=sh.idxs.length;
+  const volCol=detectVolCol();
   let h='<div class="space-y-2"><div class="flex items-center justify-between gap-2 flex-wrap"><div class="flex items-center gap-2">'+
     '<span class="px-2 py-0.5 rounded-full text-xs font-medium '+c.badge+'">'+(sh.pri?'★ ':'')+byKey(sh.tier).col+'</span>'+
     '<span class="font-semibold text-slate-800">'+esc(sh.name)+'</span>'+
     '<span class="text-sm text-slate-400">· '+total.toLocaleString()+' KW · tab "'+esc(sh.sheetName)+'"</span></div>'+
-    '<button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg">⬇ Xuất Excel</button></div>';
+    '<div class="flex items-center gap-3">'+
+    '<label class="flex items-center gap-1 text-xs text-slate-600 cursor-pointer select-none"><input id="sub2Toggle" type="checkbox" '+(state.sub2?"checked":"")+' class="accent-orange-500"> Gom theo root con (cấp 2)</label>'+
+    '<button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg">⬇ Xuất Excel</button></div></div>';
   if(!total){
     h+='<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">Tab này chưa có KW nào khớp.</div></div>';
-    panel.innerHTML=h;
-    const b0=document.getElementById("btnExport"); if(b0) b0.addEventListener("click",exportExcel);
-    return;
+    panel.innerHTML=h; wireSheet(panel); return;
   }
-  const volCol=detectVolCol();
+  if(!state.sub2){   // tắt cấp 2 → xem phẳng như cũ
+    h+='<div class="bg-white rounded-xl border border-slate-200 scroll" style="max-height:55vh">'+kwTableHTML(sh.idxs.map(ix=>state.rows[ix]),state.columns)+'</div>';
+    if(total>PREVIEW) h+='<p class="text-xs text-slate-400 text-center">Xem trước '+PREVIEW+' dòng — xuất Excel vẫn đủ '+total.toLocaleString()+' dòng.</p>';
+    h+='</div>'; panel.innerHTML=h; wireSheet(panel); return;
+  }
   const groups=subGroupsOf(sh);
   h+='<div class="text-xs text-slate-500 flex items-center gap-2 pt-1 flex-wrap">'+
-     '<span>Cấp 2 — <b>root con</b> ('+groups.length+'); đã bỏ term chung "'+esc(sh.name)+'" · xếp theo 4 nhóm, '+(volCol?'volume':'số KW')+' tăng dần</span>'+
+     '<span>Cấp 2 — <b>root con</b> ('+groups.length+'); đã bỏ term chung "'+esc(sh.name)+'" · xếp theo 4 nhóm, '+(volCol?'volume':'số KW')+' giảm dần</span>'+
      '<button id="subToggleAll" class="ml-auto text-slate-500 hover:text-slate-700 underline">Mở/Thu tất cả</button></div>';
   h+='<div class="space-y-1.5">';
   groups.forEach((g,gi)=>{
     const gt=g.tier?COLOR[byKey(g.tier).color]:null;
-    const badge=gt?gt.badge:'bg-slate-100 text-slate-500';
-    const gcol=g.tier?byKey(g.tier).col:'Chưa khớp';
     const label=g.root||'(không có root phụ)';
     h+='<div class="bg-white rounded-lg border border-slate-200 overflow-hidden">'+
        '<button class="subhead w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50" data-sub="'+gi+'">'+
          '<span class="subcaret text-slate-400 text-xs w-3 inline-block">▸</span>'+
          '<span class="font-medium text-slate-800">'+esc(label)+'</span>'+
-         '<span class="px-2 py-0.5 rounded-full text-[11px] font-medium '+badge+'">'+esc(gcol)+'</span>'+
+         (gt?'<span class="px-2 py-0.5 rounded-full text-[11px] font-medium '+gt.badge+'">'+esc(byKey(g.tier).col)+'</span>':'')+
          '<span class="ml-auto text-xs text-slate-400">'+g.idxs.length.toLocaleString()+' KW'+(volCol?' · vol '+Math.round(g.vol).toLocaleString():'')+'</span>'+
        '</button>'+
        '<div class="subbody hidden border-t border-slate-100 scroll" style="max-height:45vh" data-sub="'+gi+'">'+
@@ -554,7 +571,7 @@ function renderSingleSheet(panel, i){
   });
   h+='</div></div>';
   panel.innerHTML=h;
-  const b=document.getElementById("btnExport"); if(b) b.addEventListener("click",exportExcel);
+  wireSheet(panel);
   panel.querySelectorAll(".subhead").forEach(btn=>btn.addEventListener("click",()=>{
     const gi=btn.dataset.sub;
     const body=panel.querySelector('.subbody[data-sub="'+gi+'"]');
@@ -568,6 +585,11 @@ function renderSingleSheet(panel, i){
     bodies.forEach(b=>b.classList.toggle("hidden",!anyHidden));
     panel.querySelectorAll(".subcaret").forEach(cc=>cc.textContent=anyHidden?"▾":"▸");
   });
+}
+// Nối nút Xuất Excel + toggle cấp 2 cho panel tab
+function wireSheet(panel){
+  const b=document.getElementById("btnExport"); if(b) b.addEventListener("click",exportExcel);
+  const t2=document.getElementById("sub2Toggle"); if(t2) t2.addEventListener("change",()=>{state.sub2=t2.checked;render();});
 }
 
 /* ============================ Global wiring ============================ */
