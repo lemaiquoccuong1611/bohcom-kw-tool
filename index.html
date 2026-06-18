@@ -474,7 +474,10 @@ function fillKw(){
 }
 
 /* ============================ Cấp 2: tách root phụ trong mỗi tab (không tạo tab mới) ============================ */
-// Bỏ term chung của tab (theo canon) khỏi 1 KW, phần còn lại = "root phụ".
+// Từ "rác" rút gọn root con (dạng canon): stopword + từ generic quà tặng. Giữ từ nhóm Đối tượng.
+const SUB_STOP=new Set(["for","the","a","an","and","or","with","to","of","in","on","by","your","you","my","that","this"]);
+const SUB_GENERIC=new Set(["gift","idea","present"]); // canon: gifts→gift, ideas→idea, presents→present
+// Bỏ term chung của tab (theo canon) khỏi 1 KW → bỏ rác → sắp xếp từ (bỏ qua thứ tự) = "root con".
 function subRootOf(kw, cell){
   const kt=canon(kw);
   const variants=(cell||"").split("/").map(v=>canon(v)).filter(t=>t.length).sort((a,b)=>b.length-a.length);
@@ -484,6 +487,8 @@ function subRootOf(kw, cell){
     for(let i=0;i+m<=rest.length;i++){let ok=true;for(let j=0;j<m;j++){if(rest[i+j]!==tt[j]){ok=false;break;}}if(ok){at=i;break;}}
     if(at>=0){ rest=rest.slice(0,at).concat(rest.slice(at+m)); break; }
   }
+  rest=rest.filter(w=>!SUB_STOP.has(w) && !SUB_GENERIC.has(w));   // bỏ stopword + từ generic
+  rest.sort();                                                     // bỏ qua thứ tự → gom chung
   return rest.join(" ");
 }
 // Gán root phụ vào 1 trong 4 nhóm bằng KW Map hiện có (null nếu chưa khớp).
