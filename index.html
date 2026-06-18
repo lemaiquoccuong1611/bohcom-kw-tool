@@ -236,9 +236,16 @@ function exportExcel(){
   for(let i=0;i<maxLen;i++) aoa.push(colVals.map(c=>c[i]??""));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),"KW Map");
   if(state.result){
+    const C_ROOT="Root phụ", C_GRP="Nhóm phụ";
+    const subHeader=state.columns.concat([C_ROOT,C_GRP]);
     state.result.sheets.forEach(sh=>{
-      const sub=sh.idxs.map(i=>state.rows[i]);
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:state.columns}),sh.sheetName);
+      const sub=sh.idxs.map(i=>{
+        const row=state.rows[i];
+        const root=subRootOf(row[state.keyCol],sh.cell);
+        const tier=subTierOf(root);
+        return Object.assign({},row,{[C_ROOT]:root,[C_GRP]:tier?byKey(tier).col:"Chưa khớp"});
+      });
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:subHeader}),sh.sheetName);
     });
   }
   XLSX.writeFile(wb,(state.fileName.replace(/\.(xlsx|xls|csv)$/i,"")||"keywords")+"_export.xlsx");
@@ -459,22 +466,86 @@ function fillKw(){
   if(note) note.textContent=rows.length>PREVIEW?("Xem trước "+PREVIEW+" dòng — xuất Excel vẫn đủ "+rows.length.toLocaleString()+" dòng."):"";
 }
 
+/* ============================ Cấp 2: tách root phụ trong mỗi tab (không tạo tab mới) ============================ */
+// Bỏ term chung của tab (theo canon) khỏi 1 KW, phần còn lại = "root phụ".
+function subRootOf(kw, cell){
+  const kt=canon(kw);
+  const variants=(cell||"").split("/").map(v=>canon(v)).filter(t=>t.length).sort((a,b)=>b.length-a.length);
+  let rest=kt.slice();
+  for(const tt of variants){
+    const m=tt.length; let at=-1;
+    for(let i=0;i+m<=rest.length;i++){let ok=true;for(let j=0;j<m;j++){if(rest[i+j]!==tt[j]){ok=false;break;}}if(ok){at=i;break;}}
+    if(at>=0){ rest=rest.slice(0,at).concat(rest.slice(at+m)); break; }
+  }
+  return rest.join(" ");
+}
+// Gán root phụ vào 1 trong 4 nhóm bằng KW Map hiện có (null nếu chưa khớp).
+function subTierOf(rootStr){ return rootStr ? classifyKW(rootStr, state.map).tier : null; }
+// Gom các dòng trong 1 tab theo root phụ (sắp theo số lượng giảm dần).
+function subGroupsOf(sh){
+  const m=new Map();
+  sh.idxs.forEach(ix=>{
+    const root=subRootOf(state.rows[ix][state.keyCol], sh.cell);
+    if(!m.has(root)) m.set(root,{root,tier:subTierOf(root),idxs:[]});
+    m.get(root).idxs.push(ix);
+  });
+  return [...m.values()].sort((a,b)=> b.idxs.length-a.idxs.length || a.root.localeCompare(b.root));
+}
+
 function renderSingleSheet(panel, i){
   const r=state.result; const sh=r&&r.sheets[i];
   if(!sh){ panel.innerHTML='<div class="text-slate-400 text-sm">Không tìm thấy sheet.</div>'; return; }
   const c=COLOR[byKey(sh.tier).color];
-  const rows=sh.idxs.map(ix=>state.rows[ix]);
+  const total=sh.idxs.length;
   let h='<div class="space-y-2"><div class="flex items-center justify-between gap-2 flex-wrap"><div class="flex items-center gap-2">'+
     '<span class="px-2 py-0.5 rounded-full text-xs font-medium '+c.badge+'">'+(sh.pri?'★ ':'')+byKey(sh.tier).col+'</span>'+
     '<span class="font-semibold text-slate-800">'+esc(sh.name)+'</span>'+
-    '<span class="text-sm text-slate-400">· '+rows.length.toLocaleString()+' KW · tab "'+esc(sh.sheetName)+'"</span></div>'+
+    '<span class="text-sm text-slate-400">· '+total.toLocaleString()+' KW · tab "'+esc(sh.sheetName)+'"</span></div>'+
     '<button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg">⬇ Xuất Excel</button></div>';
-  if(!rows.length) h+='<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">Tab này chưa có KW nào khớp.</div>';
-  else { h+='<div class="bg-white rounded-xl border border-slate-200 scroll" style="max-height:55vh">'+kwTableHTML(rows,state.columns)+'</div>';
-    if(rows.length>PREVIEW) h+='<p class="text-xs text-slate-400 text-center">Xem trước '+PREVIEW+' dòng — xuất Excel vẫn đủ '+rows.length.toLocaleString()+' dòng.</p>'; }
-  h+='</div>';
+  if(!total){
+    h+='<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">Tab này chưa có KW nào khớp.</div></div>';
+    panel.innerHTML=h;
+    const b0=document.getElementById("btnExport"); if(b0) b0.addEventListener("click",exportExcel);
+    return;
+  }
+  const groups=subGroupsOf(sh);
+  h+='<div class="text-xs text-slate-500 flex items-center gap-2 pt-1 flex-wrap">'+
+     '<span>Cấp 2 — gom theo <b>root phụ</b> ('+groups.length+' nhóm; đã bỏ term chung "'+esc(sh.name)+'")</span>'+
+     '<button id="subToggleAll" class="ml-auto text-slate-500 hover:text-slate-700 underline">Mở/Thu tất cả</button></div>';
+  h+='<div class="space-y-1.5">';
+  groups.forEach((g,gi)=>{
+    const gt=g.tier?COLOR[byKey(g.tier).color]:null;
+    const badge=gt?gt.badge:'bg-slate-100 text-slate-500';
+    const gcol=g.tier?byKey(g.tier).col:'Chưa khớp';
+    const label=g.root||'(không có root phụ)';
+    h+='<div class="bg-white rounded-lg border border-slate-200 overflow-hidden">'+
+       '<button class="subhead w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50" data-sub="'+gi+'">'+
+         '<span class="subcaret text-slate-400 text-xs w-3 inline-block">▸</span>'+
+         '<span class="font-medium text-slate-800">'+esc(label)+'</span>'+
+         '<span class="px-2 py-0.5 rounded-full text-[11px] font-medium '+badge+'">'+esc(gcol)+'</span>'+
+         '<span class="ml-auto text-xs text-slate-400">'+g.idxs.length.toLocaleString()+' KW</span>'+
+       '</button>'+
+       '<div class="subbody hidden border-t border-slate-100 scroll" style="max-height:45vh" data-sub="'+gi+'">'+
+         kwTableHTML(g.idxs.map(ix=>state.rows[ix]),state.columns)+
+         (g.idxs.length>PREVIEW?'<p class="text-xs text-slate-400 text-center py-1">Xem trước '+PREVIEW+' / '+g.idxs.length.toLocaleString()+' dòng — xuất Excel vẫn đủ.</p>':'')+
+       '</div></div>';
+  });
+  h+='</div></div>';
   panel.innerHTML=h;
   const b=document.getElementById("btnExport"); if(b) b.addEventListener("click",exportExcel);
+  panel.querySelectorAll(".subhead").forEach(btn=>btn.addEventListener("click",()=>{
+    const gi=btn.dataset.sub;
+    const body=panel.querySelector('.subbody[data-sub="'+gi+'"]');
+    const open=!body.classList.toggle("hidden");
+    btn.querySelector(".subcaret").textContent=open?"▾":"▸";
+  }));
+  const ta=document.getElementById("subToggleAll");
+  if(ta) ta.addEventListener("click",()=>{
+    const bodies=[...panel.querySelectorAll(".subbody")];
+    const anyHidden=bodies.some(b=>b.classList.contains("hidden"));
+    bodies.forEach(b=>b.classList.toggle("hidden",!anyHidden));
+    panel.querySelectorAll(".subcaret").forEach(cc=>cc.textContent=anyHidden?"▾":"▸");
+  });
 }
 
 /* ============================ Global wiring ============================ */
