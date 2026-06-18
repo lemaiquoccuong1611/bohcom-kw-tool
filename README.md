@@ -86,7 +86,7 @@ File Excel xuất ra gồm:
 - `KW Raw` — chỉ còn KW **leftover** (chưa khớp).
 - `KW Raw (Bản sao)` — **đủ toàn bộ** KW gốc, không đụng.
 - `KW Map` — 4 cột nhóm (kèm root ưu tiên ★ ở đúng cột).
-- **1 sheet cho mỗi giá trị** trong KW Map (chứa KW + đủ cột metric, giữ nguyên cột gốc). Phân loại cấp 2 (root con) chỉ hiển thị trên giao diện, **không thêm cột vào Excel**.
+- **1 sheet cho mỗi giá trị** trong KW Map (giữ nguyên cột gốc, **không thêm cột**). Trong sheet, các KW được **gom theo root con** giống giao diện: mỗi root con là 1 hàng tiêu đề (`▸ root · nhóm · n KW · vol`), KW nằm bên dưới và **gom dòng (+/-) để xổ/gập** trong Excel; xếp theo 4 nhóm, volume tăng dần.
 
 **Bất biến đã kiểm chứng (phải luôn đúng):** `matched + leftover = tổng KW`; **không dòng nào ở 2 tab**; mỗi KW matched nằm **đúng 1 tab**.
 

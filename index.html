@@ -236,9 +236,23 @@ function exportExcel(){
   for(let i=0;i<maxLen;i++) aoa.push(colVals.map(c=>c[i]??""));
   XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),"KW Map");
   if(state.result){
+    const volCol=detectVolCol();
     state.result.sheets.forEach(sh=>{
-      const sub=sh.idxs.map(i=>state.rows[i]);
-      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:state.columns}),sh.sheetName);
+      const groups=subGroupsOf(sh);              // đã xếp theo 4 nhóm + volume tăng dần
+      const aoa=[state.columns.slice()];         // hàng tiêu đề cột gốc
+      const levels=[0];                          // mức outline cho từng hàng
+      groups.forEach(g=>{
+        const gcol=g.tier?byKey(g.tier).col:"Chưa khớp";
+        const label=(g.root||"(không có root phụ)");
+        const hrow=new Array(state.columns.length).fill("");
+        hrow[0]="▸ "+label+"  ·  "+gcol+"  ·  "+g.idxs.length+" KW"+(volCol?"  ·  vol "+Math.round(g.vol):"");
+        aoa.push(hrow); levels.push(0);          // hàng tiêu đề root con
+        g.idxs.forEach(ix=>{ const row=state.rows[ix]; aoa.push(state.columns.map(c=>row[c]??"")); levels.push(1); });
+      });
+      const ws=XLSX.utils.aoa_to_sheet(aoa);
+      ws["!rows"]=levels.map(l=>l?{level:1}:{});  // gom KW dưới mỗi root con (nút +/- trong Excel)
+      ws["!outline"]={above:true};
+      XLSX.utils.book_append_sheet(wb,ws,sh.sheetName);
     });
   }
   XLSX.writeFile(wb,(state.fileName.replace(/\.(xlsx|xls|csv)$/i,"")||"keywords")+"_export.xlsx");
