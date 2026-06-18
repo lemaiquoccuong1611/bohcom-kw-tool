@@ -1,37 +1,135 @@
 # bohcom-kw-tool — KW Tool (Bộ lọc Keyword)
 
-Web tool **tĩnh, zero-build**: nạp file keyword (`.xlsx` / `.xls` / `.csv`), tự quét pool để gợi ý **KW Map**, rồi **chạy phân loại** keyword vào các nhóm theo thứ tự ưu tiên và xuất Excel nhiều sheet.
+Web tool **tĩnh, 1 file, zero-build**: nạp file keyword (`.xlsx` / `.xls` / `.csv`), tự quét pool để gợi ý **KW Map**, **chạy phân loại** keyword vào từng nhóm theo thứ tự ưu tiên, rồi **xuất Excel** nhiều sheet.
 
-Toàn bộ ứng dụng nằm trong **một file [`index.html`](index.html)** — HTML + CSS (Tailwind CDN) + JS, dùng [SheetJS](https://sheetjs.com/) và [PapaParse](https://www.papaparse.com/) qua CDN. Không cần Node, không cần build.
+Toàn bộ ứng dụng nằm trong **một file [`index.html`](index.html)** — HTML + CSS (Tailwind CDN) + JS thuần, dùng [SheetJS](https://sheetjs.com/) (xlsx 0.18.5) và [PapaParse](https://www.papaparse.com/) (5.4.1) qua CDN. **Không cần Node, không cần build, không backend.** Mở thẳng bằng trình duyệt là chạy (cần internet để tải CDN).
 
-## Cách phân loại
+> File này là **nguồn chân lý** của project. Mọi thay đổi phải tuân thủ. Khi làm việc với tool (kể cả Claude Code), hãy đọc và bám theo file này trước khi sửa bất cứ thứ gì.
 
-1. **Root KW ưu tiên** — lọc TRƯỚC tất cả; mỗi root gán vào 1 nhóm.
-2. **Seasonal → Product → Function → Đối tượng** — 4 nhóm theo thứ tự ưu tiên.
+---
 
-Mỗi giá trị KW Map tạo ra một sheet riêng khi xuất Excel; phần chưa khớp giữ lại ở sheet `KW Raw`.
+## ⚠️ 1. Nguyên tắc bất biến (KHÔNG ĐƯỢC VI PHẠM)
 
-## Chạy local
+Phần **logic lõi** đã đúng và là final. **KHÔNG** refactor, viết lại, "tối ưu", đổi tên biến/hàm, hay đổi hành vi của:
 
-Mở thẳng `index.html` bằng trình duyệt là dùng được (cần internet cho CDN). Hoặc chạy một static server bất kỳ, ví dụ:
+- Engine khớp chữ: `canon()`, `stem()`, `SYN`, `phraseIn()`.
+- Thuật toán phân loại `classifyKW()` và thứ tự ưu tiên.
+- Bộ từ điển auto-suggest `LEX` (Seasonal / Product / Function / Đối tượng).
+- Thanh **Root KW ưu tiên** + dropdown gán nhóm.
+- Cách tách tab/sheet, xử lý leftover, bản sao gốc, và logic **Xuất Excel**.
+
+Nếu buộc phải đụng vào code logic: chỉ được giữ **hành vi 100% như cũ**. Mọi tính năng mới phải **cộng thêm**, không thay đổi luồng cũ. Khi nghi ngờ → **DỪNG và hỏi**.
+
+Giữ kiến trúc **1 file `index.html` static, không build, không thêm framework**.
+
+---
+
+## 2. Quy trình 6 bước (luồng nghiệp vụ)
+
+1. **Nạp file** `.xlsx` / `.xls` / `.csv` (ưu tiên đọc sheet tên `KW Raw`). Tự tạo **bản sao gốc** `KW Raw (Bản sao)` 🔒 — giữ nguyên, không bị chỉnh.
+2. **Tạo tab KW Map** gồm 4 nhóm cột: Seasonal · Product · Function · Đối tượng.
+3. **Tự quét pool** (cột `Keyword Phrase`) và **điền sẵn** giá trị nhóm vào KW Map (kèm số KW khớp). Người dùng xem lại / sửa / thêm.
+4. **Chạy phân loại:** đọc từng `Keyword Phrase`, gán mỗi KW vào **đúng 1 nhóm** theo thứ tự ưu tiên (mục 3).
+5. **Tách tab:** mỗi giá trị (ô) trong KW Map → **1 tab/sheet riêng**, tên = giá trị root (phần trước dấu `/`). Ô 0 KW vẫn tạo tab.
+6. **Chuyển dữ liệu:** copy nguyên dòng (đủ mọi cột) của KW khớp sang tab nhóm tương ứng, đồng thời **gỡ khỏi KW Raw**. KW không khớp → **giữ nguyên** trong KW Raw (leftover).
+
+---
+
+## 3. Thứ tự ưu tiên phân loại (BẮT BUỘC)
+
+```
+0. Root KW ưu tiên   (cao nhất — người dùng tự thêm)
+1. Seasonal
+2. Product
+3. Function
+4. Đối tượng
+```
+
+- Mỗi KW chỉ vào **1 nhóm duy nhất** = nhóm ưu tiên cao nhất mà nó khớp; khớp xong **dừng**, không xét nhóm dưới.
+- Trong **cùng 1 nhóm**, ô **cụ thể hơn** (nhiều chữ hơn / dài hơn) được xét **trước** ô chung (vd `unborn baby` xét trước `baby`).
+
+---
+
+## 4. Cơ chế khớp chữ (matching engine)
+
+- **Chuẩn hoá (`canon`):** lowercase → bỏ dấu nháy `'` → tách từ `[a-z0-9]+` → **stem** từng từ → áp **từ đồng nghĩa `SYN`**.
+- **Stem (số nhiều/biến thể):** `ies→y` (babies→baby); `es` (cắt `es` sau s/x/z/ch/sh, còn lại cắt `s`: valentines→valentine); `s` cuối (trừ `ss`). Từ ≤3 ký tự giữ nguyên.
+- **`SYN` (đồng nghĩa, mở rộng biến thể):** mom/mommy/mama/mum/mothers→mother; woman→women; xmas→christmas; bday→birthday; congrats/congratulations→congratulation; pregnancy/pregnancies→pregnant; expecting/expectant/expected→expect.
+- **Khớp (`phraseIn`):** so theo **chuỗi từ nguyên vẹn liên tiếp** (whole-word, đúng thứ tự). Cách này tránh bắt nhầm giữa từ (vd `son` KHÔNG dính `season`).
+- **Dấu `/`** trong 1 ô = **HOẶC** (gộp nhiều biến thể vào cùng nhóm). Vd `mom / mother / mommy`.
+- **Tự mở rộng biến thể:** nhờ stem + SYN, gõ 1 kiểu vẫn bắt được số nhiều / cách viết gần giống (pregnant↔pregnancy, mothers day↔mother day…).
+
+---
+
+## 5. KW Map & Auto-suggest
+
+- Tool có **bộ từ điển `LEX`** cho 4 nhóm (occasion cho Seasonal, item Amazon cho Product ~90+ loại, thuộc tính/sự kiện cho Function, người nhận cho Đối tượng).
+- Khi nạp file: chỉ điền vào KW Map những term **thực sự xuất hiện trong pool**, sắp theo tần suất giảm dần. Nút **🔄 Quét thêm gợi ý** = merge thêm, giữ nguyên phần đã sửa tay.
+- Số bên phải mỗi term = số KW chứa term đó (raw match). Số thực vào tab có thể nhỏ hơn do ưu tiên (nhóm trên ăn trước).
+
+---
+
+## 6. Root KW ưu tiên (tính năng đặc biệt)
+
+- Thanh riêng (màu hồng ★) **luôn hiện** trên cùng, ở mọi tab.
+- Mỗi root = `{ term, group }` — có **dropdown chọn nhóm** (Seasonal/Product/Function/Đối tượng).
+- KW khớp root → **lọc trước tất cả**, nhưng **gom kết quả vào nhóm đã chọn**: tab mang **màu nhóm đó + dấu ★**, đếm cộng vào nhóm đó, đứng đầu hàng tab.
+- Root ưu tiên **cũng được thêm vào KW Map** (hiện ★ ở cột nhóm đã chọn, cả trong giao diện lẫn file Excel xuất ra).
+
+---
+
+## 7. Đầu ra & Xuất Excel
+
+File Excel xuất ra gồm:
+
+- `KW Raw` — chỉ còn KW **leftover** (chưa khớp).
+- `KW Raw (Bản sao)` — **đủ toàn bộ** KW gốc, không đụng.
+- `KW Map` — 4 cột nhóm (kèm root ưu tiên ★ ở đúng cột).
+- **1 sheet cho mỗi giá trị** trong KW Map (chứa KW + đủ cột metric).
+
+**Bất biến đã kiểm chứng (phải luôn đúng):** `matched + leftover = tổng KW`; **không dòng nào ở 2 tab**; mỗi KW matched nằm **đúng 1 tab**.
+
+---
+
+## 8. Cấu trúc project
+
+```
+bohcom-kw-tool/
+├── index.html      # toàn bộ tool (static, zero-build) — KHÔNG tách file
+├── README.md       # file này — mô tả + luật + đặc tả
+├── .gitignore      # node_modules/ .DS_Store .vercel *.log
+└── push.sh         # git add + commit + push (1 lệnh)
+```
+
+---
+
+## 9. Chạy local
+
+Mở thẳng `index.html` bằng trình duyệt là dùng được (cần internet cho CDN). Hoặc chạy static server bất kỳ:
 
 ```bash
 python -m http.server 8000
 # rồi mở http://localhost:8000
 ```
 
-## Deploy (Vercel)
+---
 
-Project là static thuần (Framework = **Other**, không có build step). Trên Vercel:
+## 10. Deploy (GitHub + Vercel)
 
-- Import repo `bohcom-kw-tool` → Framework Preset = **Other** → Build Command để trống → Output Directory để trống (root) → **Deploy**.
-- Sau khi liên kết, **mỗi commit push lên `main` sẽ tự động deploy** (auto-deploy theo Git).
+- **GitHub:** repo `bohcom-kw-tool`. Source = file tĩnh.
+- **Vercel:** Import repo → Framework Preset = **Other** → **không** Build Command / Output Directory → Deploy. Bật **auto-deploy theo repo** → mỗi commit lên GitHub là Vercel tự deploy.
+- Nếu bước nào cần đăng nhập (gh / vercel / token) → **DỪNG và yêu cầu người dùng đăng nhập**, không tự bịa token.
 
-## Quy trình update
+---
+
+## 11. Quy trình update
 
 ```bash
-# sửa index.html, rồi:
+# sau khi sửa index.html:
 ./push.sh "mô tả thay đổi"
+# = git add . && git commit && git push  →  Vercel tự deploy ~30s
 ```
 
-`push.sh` chạy `git add . && git commit && git push`; Vercel tự deploy bản mới.
+> `push.sh` chạy bằng **Git Bash**. Nếu dùng PowerShell: `bash push.sh "mô tả thay đổi"`.
+
+Mọi tính năng mới: **cộng thêm**, không phá luồng/logic cũ ở mục 1–7.
