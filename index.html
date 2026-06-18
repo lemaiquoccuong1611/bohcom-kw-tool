@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KW Tool — Bộ lọc Keyword</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  body{background:#f8fafc}
+  .scroll{overflow:auto}
+  ::-webkit-scrollbar{height:9px;width:9px}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:9px}
+  .trunc{max-width:18rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body class="p-4 sm:p-6">
+<div class="max-w-6xl mx-auto" id="app"></div>
+
+<script>
+/* ============================ Config ============================ */
+const TIERS = [
+  { key:"seasonal",  label:"Nhóm Seasonal",  col:"Seasonal",  priority:1, color:"violet",  hint:"valentine, christmas, mother day…" },
+  { key:"product",   label:"Nhóm Product",   col:"Product",   priority:2, color:"blue",    hint:"sonogram, frame, ultrasound…" },
+  { key:"function",  label:"Nhóm Function",  col:"Function",  priority:3, color:"emerald", hint:"pregnancy, announcement, countdown…" },
+  { key:"recipient", label:"Nhóm Đối tượng", col:"Đối tượng", priority:4, color:"orange",  hint:"baby, mom, expecting mother…" },
+];
+const PRIORITY_TIER = { key:"priority", label:"Root KW ưu tiên", col:"Ưu tiên", priority:0, color:"rose", hint:"root KW chủ lực muốn tách trước" };
+const ALL_TIERS = [PRIORITY_TIER, ...TIERS];
+const PRIORITY = ["priority","seasonal","product","function","recipient"];
+const TIER_ORDER = ["seasonal","product","function","recipient"];
+const byKey = k => ALL_TIERS.find(t=>t.key===k);
+const COLOR = {
+  rose:{dot:"bg-rose-500",text:"text-rose-700",bg:"bg-rose-50",border:"border-rose-200",head:"bg-rose-100",badge:"bg-rose-100 text-rose-700"},
+  violet:{dot:"bg-violet-500",text:"text-violet-700",bg:"bg-violet-50",border:"border-violet-200",head:"bg-violet-100",badge:"bg-violet-100 text-violet-700"},
+  blue:{dot:"bg-blue-500",text:"text-blue-700",bg:"bg-blue-50",border:"border-blue-200",head:"bg-blue-100",badge:"bg-blue-100 text-blue-700"},
+  emerald:{dot:"bg-emerald-500",text:"text-emerald-700",bg:"bg-emerald-50",border:"border-emerald-200",head:"bg-emerald-100",badge:"bg-emerald-100 text-emerald-700"},
+  orange:{dot:"bg-orange-500",text:"text-orange-700",bg:"bg-orange-50",border:"border-orange-200",head:"bg-orange-100",badge:"bg-orange-100 text-orange-700"},
+};
+const PREVIEW = 200;
+const RAW="KW Raw", BACKUP="KW Raw (Bản sao)";
+
+/* ============================ Matching engine ============================ */
+const SYN = {mom:"mother",moms:"mother",mommy:"mother",mama:"mother",mum:"mother",momma:"mother",mothers:"mother",
+  woman:"women",xmas:"christmas",bday:"birthday",
+  congrats:"congratulation",congratulations:"congratulation",
+  pregnancy:"pregnant",pregnancies:"pregnant",
+  expecting:"expect",expectant:"expect",expected:"expect"};
+function stem(w){
+  if(w.length<=3) return w;
+  if(w.endsWith("ies") && w.length>4) return w.slice(0,-3)+"y";
+  if(w.endsWith("es") && w.length>3) return "sxzh".includes(w[w.length-3]) ? w.slice(0,-2) : w.slice(0,-1);
+  if(w.endsWith("s") && !w.endsWith("ss")) return w.slice(0,-1);
+  return w;
+}
+function canon(s){
+  const words = (String(s).toLowerCase().replace(/'/g,"").match(/[a-z0-9]+/g)) || [];
+  return words.map(w=>{const st=stem(w); return SYN[st]||st;});
+}
+function phraseIn(kt,tt){
+  const m=tt.length; if(!m) return false;
+  for(let i=0;i+m<=kt.length;i++){let ok=true;for(let j=0;j<m;j++){if(kt[i+j]!==tt[j]){ok=false;break;}}if(ok)return true;}
+  return false;
+}
+function classifyKW(kw,map){
+  const kt=canon(kw);
+  // 1) Root KW ưu tiên — kiểm tra TRƯỚC tất cả; mỗi root gán vào 1 nhóm
+  for(const root of (map.priority||[])){
+    const term=(root.term||"").trim(); if(!term) continue;
+    for(const v of term.split("/")) if(phraseIn(kt,canon(v))) return {tier:(root.group||"product"),cell:term,pri:true};
+  }
+  // 2) 4 nhóm theo thứ tự ưu tiên
+  for(const key of TIER_ORDER){
+    const cells=(map[key]||[]).filter(c=>c.trim());
+    cells.sort((a,b)=>{
+      const la=Math.max(...a.split("/").map(v=>canon(v).length));
+      const lb=Math.max(...b.split("/").map(v=>canon(v).length));
+      return lb!==la?lb-la:b.length-a.length;
+    });
+    for(const cell of cells) for(const v of cell.split("/")) if(phraseIn(kt,canon(v))) return {tier:key,cell:cell.trim(),pri:false};
+  }
+  return {tier:null,cell:null,pri:false};
+}
+
+/* ============================ Auto-suggest lexicons (tool tự trích KW Map) ============================ */
+const LEX = {
+  seasonal:["christmas / xmas","valentine","mother day / mothers day","father day / fathers day","birthday / bday",
+            "easter","halloween","thanksgiving","anniversary","wedding","baby shower","new year","graduation","first christmas"],
+  product:[
+    "frame / picture frame / photo frame","sonogram","ultrasound",
+    "home decor / home decoration / decor / decoration","wall art","canvas","poster","print / art print","plaque","sign","ornament","figurine","tapestry","vase","tray","candle","pillow / throw pillow","blanket / throw","doormat","coaster","clock",
+    "mug","tumbler","drinkware","cup","wine glass","water bottle / bottle","flask","cutting board","apron","shot glass",
+    "desk","desk decor / desk accessory","mousepad / mouse pad","notebook","journal","planner","calendar","pen","bookmark","notepad","stationery",
+    "sticker","decal","card / greeting card","label","magnet",
+    "shirt / t-shirt / tshirt / tee","hoodie","sweatshirt","sweater","tank top","hat / cap / beanie","sock","scarf","robe","pajama","onesie","romper","bodysuit","bib",
+    "tote bag / tote","bag / handbag","backpack","pouch","makeup bag","wallet",
+    "necklace","bracelet","keychain","ring","earring","pendant","charm","lapel pin / pin","watch","cufflink",
+    "rattle","swaddle","pacifier","milestone blanket",
+    "wooden / wood","leather","acrylic","ceramic","metal","glass","marble","bamboo",
+    "jar","box / gift box","basket / gift basket","book"
+  ],
+  function:["personalized / customized / custom","funny","cute","unique","pregnancy / pregnant",
+            "announcement / announce","countdown","gender reveal","congratulation / congrats","love at first",
+            "reveal","essential","keepsake","memory / memories","milestone"],
+  recipient:["mom / mother / mommy / mama","new mom","mom to be / mom-to-be","first time mom",
+             "dad / father / daddy / papa","new dad","expecting mother","expecting parent / expecting parents",
+             "parents to be / parents-to-be","grandma / grandmother","grandpa / grandfather","grandparent / grandparents","wife","husband",
+             "baby / babies","unborn baby","newborn","women / woman","men / man","sister","brother","daughter",
+             "son","couple","friend","her","him"],
+};
+function termCount(term, canonKws){
+  const vs=term.split("/").map(v=>canon(v)).filter(t=>t.length);
+  if(!vs.length) return 0;
+  let n=0; for(const kt of canonKws){ if(vs.some(t=>phraseIn(kt,t))) n++; } return n;
+}
+// Scan pool, auto-fill KW Map with lexicon values that actually appear (sorted by frequency).
+// merge=true keeps existing entries and only adds new ones (preserves manual edits).
+function autoSuggestMap(merge){
+  if(!state.rows.length) return;
+  const canonKws=state.rows.map(r=>canon(r[state.keyCol]));
+  for(const tier of Object.keys(LEX)){
+    const found=[];
+    for(const entry of LEX[tier]){
+      const cnt=termCount(entry,canonKws);
+      if(cnt>0) found.push({entry,cnt});
+    }
+    found.sort((a,b)=>b.cnt-a.cnt);
+    const existing = merge ? state.map[tier].slice() : [];
+    const have = new Set(existing.map(x=>x.trim().toLowerCase()));
+    state.map[tier] = existing.concat(found.filter(f=>!have.has(f.entry.toLowerCase())).map(f=>f.entry));
+  }
+}
+
+/* ============================ State ============================ */
+const state = {
+  fileName:"", columns:[], rows:[], backupRows:[], keyCol:"",
+  map:{priority:[],seasonal:[],product:[],function:[],recipient:[]},
+  result:null, active:"", viewSheet:0, search:"", loading:false, error:"",
+};
+
+/* ============================ Data helpers ============================ */
+function parseAOA(aoa){
+  const cleaned=aoa.filter(r=>r&&r.some(c=>String(c??"").trim()!==""));
+  if(!cleaned.length) return null;
+  const header=cleaned[0].map((h,i)=>String(h??"").trim()||("Cột "+(i+1)));
+  const rows=cleaned.slice(1).map(r=>{const o={};header.forEach((h,i)=>o[h]=r[i]??"");return o;});
+  return {columns:header,rows};
+}
+const detectKeyCol = cols => cols.find(c=>/keyword|phrase|search term/i.test(c)) || cols[0];
+
+function loadParsed(parsed){
+  if(!parsed){ state.error="File rỗng hoặc không đọc được."; state.loading=false; render(); return; }
+  state.columns=parsed.columns;
+  state.rows=parsed.rows;
+  state.backupRows=parsed.rows.map(r=>({...r}));
+  state.keyCol=detectKeyCol(parsed.columns);
+  state.result=null; state.active="raw"; state.error=""; state.loading=false;
+  autoSuggestMap(false);   // tool tự trích & điền KW Map từ pool
+  render();
+}
+function handleFile(file){
+  if(!file) return;
+  state.loading=true; state.error=""; state.fileName=file.name; render();
+  const lower=file.name.toLowerCase();
+  if(lower.endsWith(".csv")){
+    Papa.parse(file,{skipEmptyLines:true,
+      complete:res=>loadParsed(parseAOA(res.data)),
+      error:err=>{state.error="Lỗi CSV: "+err.message;state.loading=false;render();}});
+  } else if(lower.endsWith(".xlsx")||lower.endsWith(".xls")){
+    const rd=new FileReader();
+    rd.onload=e=>{try{
+      const wb=XLSX.read(e.target.result,{type:"array"});
+      const sn=wb.SheetNames.find(n=>n.trim().toLowerCase()==="kw raw")||wb.SheetNames[0];
+      loadParsed(parseAOA(XLSX.utils.sheet_to_json(wb.Sheets[sn],{header:1,defval:""})));
+    }catch(err){state.error="Lỗi Excel: "+err.message;state.loading=false;render();}};
+    rd.onerror=()=>{state.error="Không đọc được file.";state.loading=false;render();};
+    rd.readAsArrayBuffer(file);
+  } else { state.error="Chỉ hỗ trợ .xlsx, .xls, .csv"; state.loading=false; render(); }
+}
+function resetAll(){
+  Object.assign(state,{fileName:"",columns:[],rows:[],backupRows:[],keyCol:"",
+    map:{priority:[],seasonal:[],product:[],function:[],recipient:[]},result:null,active:"",viewSheet:0,search:"",loading:false,error:""});
+  render();
+}
+
+function sanitizeName(name,used){
+  let nm=name.replace(/[\/\\?*\[\]:]/g," ").replace(/\s+/g," ").trim().slice(0,31)||"sheet";
+  let base=nm,k=1;
+  while(used.has(nm.toLowerCase())){k++;nm=(base.slice(0,28)+" "+k).slice(0,31);}
+  used.add(nm.toLowerCase()); return nm;
+}
+function runClassify(){
+  if(!state.rows.length) return;
+  const byIndex=state.rows.map(r=>classifyKW(r[state.keyCol],state.map));
+  const perTier={seasonal:0,product:0,function:0,recipient:0,none:0};
+  let priCount=0;
+  byIndex.forEach(c=>{ perTier[c.tier?c.tier:"none"]++; if(c.pri) priCount++; });
+  const used=new Set(), sheets=[];
+  // Root ưu tiên trước (gom màu/tab theo nhóm đã chọn), đánh dấu pri
+  (state.map.priority||[]).forEach(root=>{
+    const term=(root.term||"").trim(); if(!term) return;
+    const grp=root.group||"product";
+    const primary=(term.split("/")[0].trim())||term;
+    const idxs=[]; byIndex.forEach((c,i)=>{if(c.pri&&c.cell===term&&c.tier===grp)idxs.push(i);});
+    sheets.push({tier:grp,name:primary,cell:term,sheetName:sanitizeName(primary,used),idxs,pri:true});
+  });
+  // rồi 4 nhóm
+  for(const key of TIER_ORDER){
+    for(const raw of (state.map[key]||[])){
+      const cell=raw.trim(); if(!cell) continue;
+      const primary=(cell.split("/")[0].trim())||cell;
+      const idxs=[]; byIndex.forEach((c,i)=>{if(!c.pri&&c.tier===key&&c.cell===cell)idxs.push(i);});
+      sheets.push({tier:key,name:primary,cell:cell,sheetName:sanitizeName(primary,used),idxs,pri:false});
+    }
+  }
+  state.result={byIndex,perTier,priCount,matched:state.rows.length-perTier.none,unmatched:perTier.none,sheets};
+  state.viewSheet=0; state.active="raw"; state.search="";
+  render();
+}
+const hasMapTerms = () => (state.map.priority||[]).some(o=>o.term&&o.term.trim()) || TIER_ORDER.some(k=>state.map[k].some(c=>c.trim()));
+
+function exportExcel(){
+  const wb=XLSX.utils.book_new();
+  const rawRows=state.rows.filter((_,i)=>!state.result||!state.result.byIndex[i].tier);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rawRows,{header:state.columns}),RAW);
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(state.backupRows,{header:state.columns}),BACKUP.replace(/[\/\\?*\[\]:]/g," ").slice(0,31));
+  const order=["product","function","recipient","seasonal"];
+  const headers=order.map(k=>byKey(k).label);
+  const colVals=order.map(k=>{
+    const pri=(state.map.priority||[]).filter(o=>o.term&&o.term.trim()&&(o.group||"product")===k).map(o=>"★ "+o.term.trim());
+    return pri.concat(state.map[k]);
+  });
+  const maxLen=Math.max(1,...colVals.map(c=>c.length));
+  const aoa=[headers];
+  for(let i=0;i<maxLen;i++) aoa.push(colVals.map(c=>c[i]??""));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet(aoa),"KW Map");
+  if(state.result){
+    state.result.sheets.forEach(sh=>{
+      const sub=sh.idxs.map(i=>state.rows[i]);
+      XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sub,{header:state.columns}),sh.sheetName);
+    });
+  }
+  XLSX.writeFile(wb,(state.fileName.replace(/\.(xlsx|xls|csv)$/i,"")||"keywords")+"_export.xlsx");
+}
+
+/* ============================ Render helpers ============================ */
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+function currentRows(){
+  const isRaw=state.active==="raw";
+  let base=(isRaw?state.rows:state.backupRows).map((r,i)=>({r,i}));
+  if(isRaw && state.result) base=base.filter(({i})=>!state.result.byIndex[i].tier);
+  const q=state.search.trim().toLowerCase();
+  if(q) base=base.filter(({r})=>Object.values(r).some(v=>String(v).toLowerCase().includes(q)));
+  return base;
+}
+function kwTableHTML(rows, cols){
+  let h='<table class="w-full text-sm"><thead class="sticky top-0 bg-slate-100 z-10"><tr>';
+  h+='<th class="px-3 py-2 text-left text-slate-500 font-medium w-12">#</th>';
+  cols.forEach(c=>h+='<th class="px-3 py-2 text-left text-slate-700 font-semibold whitespace-nowrap">'+esc(c)+'</th>');
+  h+='</tr></thead><tbody>';
+  rows.slice(0,PREVIEW).forEach((row,n)=>{
+    h+='<tr class="border-t border-slate-100 hover:bg-orange-50/40"><td class="px-3 py-2 text-slate-400">'+(n+1)+'</td>';
+    cols.forEach(c=>h+='<td class="px-3 py-2 text-slate-700 trunc" title="'+esc(row[c])+'">'+esc(row[c])+'</td>');
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  return h;
+}
+
+/* ============================ Priority bar (Root KW ưu tiên — always visible) ============================ */
+function priorityBarHTML(){
+  const cp=COLOR[PRIORITY_TIER.color];
+  const canonKws=state.rows.map(r=>canon(r[state.keyCol]));
+  let h='<div class="rounded-xl border '+cp.border+' '+cp.bg+'">'+
+    '<div class="'+cp.head+' rounded-t-xl px-3 py-2 flex items-center gap-2">'+
+      '<span class="w-5 h-5 rounded-full '+cp.dot+' text-white text-xs font-bold flex items-center justify-center">★</span>'+
+      '<span class="font-semibold '+cp.text+'">Root KW ưu tiên — lọc TRƯỚC tất cả các nhóm</span>'+
+      '<span class="ml-auto text-xs '+cp.text+' opacity-70">'+state.map.priority.filter(x=>x.term&&x.term.trim()).length+' root</span></div>'+
+    '<div class="p-3"><p class="text-xs '+cp.text+' opacity-80 mb-2">Thêm root KW chủ lực muốn tách <b>trước</b> mọi nhóm, và <b>chọn nhóm</b> bên cạnh để gom kết quả (tab/màu/đếm) vào đúng nhóm đó. Dùng <code class="bg-white px-1 rounded">/</code> để gộp biến thể.</p>'+
+    '<div class="flex flex-wrap gap-2 items-center">';
+  state.map.priority.forEach((root,idx)=>{
+    const cnt=termCount(root.term||"",canonKws);
+    const gc=COLOR[(byKey(root.group)||TIERS[1]).color];
+    h+='<div class="flex items-center gap-1 bg-white rounded border '+cp.border+' px-1">'+
+      '<input class="pri-term px-2 py-1 text-sm w-40 outline-none" data-idx="'+idx+'" value="'+esc(root.term||"")+'" placeholder="vd: sonogram" />'+
+      '<select class="pri-group text-xs rounded border border-slate-200 px-1 py-1 font-medium '+gc.text+'" data-idx="'+idx+'" title="Gom vào nhóm">'+
+        TIERS.map(t=>'<option value="'+t.key+'" '+((root.group||"product")===t.key?"selected":"")+'>'+t.col+'</option>').join("")+
+      '</select>'+
+      '<span class="text-xs text-slate-400" title="Số KW khớp">'+cnt+'</span>'+
+      '<button class="pri-del text-slate-400 hover:text-red-500 px-1" data-idx="'+idx+'">🗑</button></div>';
+  });
+  h+='<button class="pri-add '+cp.text+' text-sm font-medium px-3 py-1.5 rounded border border-dashed '+cp.border+' hover:bg-white">+ Thêm ưu tiên</button>';
+  h+='</div></div></div>';
+  return h;
+}
+
+/* ============================ Main render ============================ */
+function render(){
+  const app=document.getElementById("app");
+  const r=state.result;
+  let html="";
+
+  // Header
+  html+='<div class="mb-6 flex items-start justify-between gap-3 flex-wrap"><div>'+
+    '<h1 class="text-2xl font-bold text-slate-800 flex items-center gap-2">'+
+    '<span class="text-orange-500">🔎</span> KW Tool — Bộ lọc Keyword</h1>'+
+    '<p class="text-slate-500 text-sm mt-1">Nạp file → bản sao → KW Map → <b>chạy phân loại</b>: chuyển KW vào sheet từng nhóm theo ưu tiên, KW Raw chỉ còn phần chưa khớp.</p></div>';
+  if(state.rows.length){
+    const on=hasMapTerms();
+    html+='<button id="btnClassify" '+(on?"":"disabled")+' class="text-sm font-semibold px-4 py-2.5 rounded-lg '+
+      (on?"bg-slate-800 hover:bg-slate-900 text-white":"bg-slate-200 text-slate-400 cursor-not-allowed")+'">▶ Chạy phân loại</button>';
+  }
+  html+='</div>';
+
+  // Upload
+  if(!state.rows.length){
+    html+='<div id="drop" class="border-2 border-dashed border-slate-300 rounded-xl bg-white p-10 text-center cursor-pointer hover:border-orange-400 hover:bg-orange-50 transition-colors">'+
+      '<div class="text-4xl text-slate-300 mb-2">⬆</div>'+
+      '<p class="text-slate-700 font-medium">Kéo thả file vào đây hoặc bấm để chọn</p>'+
+      '<p class="text-slate-400 text-sm mt-1">Hỗ trợ .xlsx, .xls, .csv — đọc sheet "KW Raw" nếu có</p>'+
+      '<input id="fileInput" type="file" accept=".xlsx,.xls,.csv" class="hidden" /></div>';
+  }
+  if(state.loading) html+='<div class="text-center text-slate-500 py-6">Đang đọc file…</div>';
+  if(state.error) html+='<div class="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 mt-4 text-sm">'+esc(state.error)+'</div>';
+
+  if(state.rows.length){
+    html+='<div class="space-y-4">';
+    // file info
+    html+='<div class="bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-center gap-3 justify-between">'+
+      '<div class="flex items-center gap-2 text-slate-700 flex-wrap"><span class="text-emerald-500">✓</span>'+
+      '<span class="font-medium">'+esc(state.fileName)+'</span>'+
+      '<span class="text-slate-400 text-sm">· '+state.rows.length.toLocaleString()+' KW · '+state.columns.length+' cột</span>'+
+      '<span class="text-slate-400 text-sm">· cột KW: <select id="keyCol" class="border border-slate-300 rounded px-1 py-0.5 text-sm text-slate-700">'+
+      state.columns.map(c=>'<option '+(c===state.keyCol?"selected":"")+'>'+esc(c)+'</option>').join("")+'</select></span></div>'+
+      '<button id="btnReset" class="text-sm text-slate-500 hover:text-red-500">↺ Đổi file</button></div>';
+
+    // Root KW ưu tiên — always visible
+    html+=priorityBarHTML();
+
+    // summary
+    if(r){
+      html+='<div class="bg-white rounded-xl border border-slate-200 p-4">'+
+        '<div class="flex items-center gap-2 mb-3 text-slate-700 font-semibold"><span class="text-emerald-500">✓</span> Đã phân loại '+
+        r.matched.toLocaleString()+' / '+state.rows.length.toLocaleString()+' KW <span class="text-slate-400 font-normal">· còn '+r.unmatched.toLocaleString()+' chưa khớp</span>'+(r.priCount?' <span class="text-rose-600 font-normal">· ★ '+r.priCount+' qua Root ưu tiên</span>':'')+'</div>'+
+        '<div class="grid grid-cols-2 md:grid-cols-5 gap-2">';
+      TIERS.forEach(t=>{const c=COLOR[t.color];
+        html+='<div class="rounded-lg '+c.bg+' border '+c.border+' px-3 py-2"><div class="text-xs font-medium '+c.text+' flex items-center gap-1"><span class="w-2 h-2 rounded-full '+c.dot+'"></span>'+t.col+'</div><div class="text-xl font-bold '+c.text+'">'+r.perTier[t.key]+'</div></div>';});
+      html+='<div class="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2"><div class="text-xs font-medium text-slate-500">Chưa khớp</div><div class="text-xl font-bold text-slate-500">'+r.unmatched+'</div></div>';
+      html+='</div></div>';
+    }
+
+    // main tab bar
+    const tabs=[{id:"raw",name:RAW,kind:"kw",count:r?r.unmatched:state.rows.length},
+                {id:"backup",name:BACKUP,kind:"kw",count:state.backupRows.length,locked:true},
+                {id:"map",name:"KW Map",kind:"map"}];
+    html+='<div class="flex items-center gap-1 border-b border-slate-200 flex-wrap">';
+    tabs.forEach(t=>{const a=state.active===t.id;
+      const ic=t.kind==="map"?"🗺":t.id==="backup"?"📋":"📥";
+      html+='<button data-tab="'+t.id+'" class="tabbtn px-4 py-2 text-sm font-medium rounded-t-lg flex items-center gap-1.5 -mb-px border-b-2 '+
+        (a?"border-orange-500 text-orange-600 bg-white":"border-transparent text-slate-500 hover:text-slate-700")+'">'+
+        '<span>'+ic+'</span>'+esc(t.name)+(t.locked?' <span class="text-slate-400">🔒</span>':"")+(t.kind==="kw"?' <span class="text-xs text-slate-400">('+t.count+')</span>':"")+'</button>';
+    });
+    html+='</div>';
+    // Step 5: one TAB per KW Map value (created after Chạy phân loại)
+    if(r){
+      html+='<div class="flex items-center gap-1.5 flex-wrap pt-1">'+
+        '<span class="text-xs text-slate-400 mr-1 py-1">Tab nhóm ('+r.sheets.length+'):</span>';
+      r.sheets.forEach((sh,i)=>{const c=COLOR[byKey(sh.tier).color]; const a=state.active==="sheet:"+i;
+        html+='<button data-tab="sheet:'+i+'" class="tabbtn text-xs font-medium px-2.5 py-1 rounded-full border flex items-center gap-1 '+
+          (a? c.badge+' border-transparent ring-2 ring-offset-1 '+c.text.replace("text-","ring-") : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300')+'">'+
+          '<span class="w-1.5 h-1.5 rounded-full '+c.dot+'"></span>'+(sh.pri?'★ ':'')+esc(sh.name)+' <span class="opacity-60">'+sh.idxs.length+'</span></button>';
+      });
+      html+='</div>';
+    }
+
+    // panel
+    html+='<div id="panel"></div></div>';
+  }
+
+  app.innerHTML=html;
+  wireGlobal();
+  if(state.rows.length) renderPanel();
+}
+
+function renderPanel(){
+  const panel=document.getElementById("panel"); if(!panel) return;
+  if(state.active==="map") return renderMap(panel);
+  if(state.active.indexOf("sheet:")===0) return renderSingleSheet(panel, +state.active.slice(6));
+  renderKw(panel);
+}
+
+function renderMap(panel){
+  const canonKws=state.rows.map(r=>canon(r[state.keyCol]));
+  let h='<div class="space-y-4">'+
+    '<div class="bg-slate-100 border border-slate-200 rounded-lg px-4 py-3 text-sm text-slate-600 flex items-start justify-between gap-3 flex-wrap">'+
+      '<div>Tool đã <b>tự quét pool</b> và điền sẵn các nhóm vào KW Map (số bên phải = số KW khớp). Bạn xem lại, sửa/thêm/xoá tuỳ ý rồi bấm <b>Chạy phân loại</b>. Dùng <code class="bg-white px-1 rounded">/</code> để gộp biến thể; tool tự mở rộng biến thể (số nhiều, pregnant→pregnancy…).</div>'+
+      '<button id="btnRescan" class="shrink-0 bg-white border border-slate-300 hover:border-slate-400 text-slate-700 text-sm font-medium px-3 py-1.5 rounded-lg">🔄 Quét thêm gợi ý</button>'+
+    '</div>'+
+    '<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">';
+  [...TIERS].sort((a,b)=>a.priority-b.priority).forEach(tier=>{const c=COLOR[tier.color];
+    h+='<div class="rounded-xl border '+c.border+' '+c.bg+' flex flex-col">'+
+      '<div class="'+c.head+' rounded-t-xl px-3 py-2 flex items-center gap-2"><span class="w-5 h-5 rounded-full '+c.dot+' text-white text-xs font-bold flex items-center justify-center">'+tier.priority+'</span><span class="font-semibold '+c.text+'">'+tier.label+'</span><span class="ml-auto text-xs '+c.text+' opacity-70">'+state.map[tier.key].filter(x=>x.trim()).length+'</span></div>'+
+      '<div class="p-2 space-y-2 flex-1">';
+    // Root ưu tiên thuộc nhóm này (đã thêm vào KW Map, đánh dấu ★) — sửa ở thanh Root ưu tiên
+    const priHere=(state.map.priority||[]).filter(o=>o.term&&o.term.trim()&&(o.group||"product")===tier.key);
+    priHere.forEach(o=>{
+      const cnt=termCount(o.term,canonKws);
+      h+='<div class="flex items-center gap-1 px-2 py-1.5 rounded bg-rose-50 border border-rose-200" title="Root KW ưu tiên — sửa ở thanh Root ưu tiên phía trên">'+
+        '<span class="text-sm text-rose-700 font-medium flex-1 truncate">★ '+esc(o.term)+'</span>'+
+        '<span class="text-[10px] text-rose-400">ưu tiên</span>'+
+        '<span class="text-xs text-slate-400 w-7 text-right">'+cnt+'</span></div>';
+    });
+    if(!state.map[tier.key].length && !priHere.length) h+='<p class="text-xs text-slate-400 px-1 py-2">Không tìm thấy nhóm nào trong pool.<br>Bấm "+ Thêm nhóm" để tự thêm. VD: '+tier.hint+'</p>';
+    state.map[tier.key].forEach((term,idx)=>{
+      const cnt=termCount(term,canonKws);
+      h+='<div class="flex items-center gap-1">'+
+        '<input class="map-term flex-1 px-2 py-1.5 rounded border border-slate-300 text-sm bg-white" data-key="'+tier.key+'" data-idx="'+idx+'" value="'+esc(term)+'" placeholder="vd: sonogram / ultrasound" />'+
+        '<span class="text-xs text-slate-400 w-7 text-right" title="Số KW khớp">'+cnt+'</span>'+
+        '<button class="map-del text-slate-400 hover:text-red-500 px-1" data-key="'+tier.key+'" data-idx="'+idx+'">🗑</button></div>';
+    });
+    h+='<button class="map-add w-full '+c.text+' text-sm font-medium py-1.5 rounded border border-dashed '+c.border+' hover:bg-white" data-key="'+tier.key+'">+ Thêm nhóm</button>';
+    h+='</div></div>';
+  });
+  h+='</div><div class="flex justify-end"><button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-4 py-2 rounded-lg">⬇ Xuất Excel</button></div></div>';
+  panel.innerHTML=h;
+
+  panel.querySelectorAll(".map-term").forEach(inp=>inp.addEventListener("input",()=>{state.map[inp.dataset.key][+inp.dataset.idx]=inp.value;}));
+  panel.querySelectorAll(".map-del").forEach(b=>b.addEventListener("click",()=>{state.map[b.dataset.key].splice(+b.dataset.idx,1);render();}));
+  panel.querySelectorAll(".map-add").forEach(b=>b.addEventListener("click",()=>{state.map[b.dataset.key].push("");render();}));
+  panel.querySelector("#btnRescan").addEventListener("click",()=>{autoSuggestMap(true);render();});
+  panel.querySelector("#btnExport").addEventListener("click",exportExcel);
+}
+
+function renderKw(panel){
+  const isRaw=state.active==="raw";
+  let h='<div class="space-y-3">';
+  if(isRaw && state.result) h+='<div class="bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg px-4 py-2 text-sm">✓ Đã chuyển '+state.result.matched.toLocaleString()+' KW sang '+state.result.sheets.length+' sheet nhóm. Còn lại '+state.result.unmatched.toLocaleString()+' KW chưa khớp — giữ nguyên ở đây.</div>';
+  if(!isRaw) h+='<div class="bg-amber-50 border border-amber-200 text-amber-700 rounded-lg px-4 py-2 text-sm">🔒 Bản sao gốc — giữ nguyên, không bị chỉnh khi lọc.</div>';
+  h+='<div class="flex flex-wrap items-center gap-3">'+
+    '<input id="search" value="'+esc(state.search)+'" placeholder="Tìm nhanh…" class="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-slate-300 text-sm" />'+
+    '<span id="countLabel" class="text-sm text-slate-500"></span>'+
+    '<button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-4 py-2 rounded-lg">⬇ Xuất Excel</button></div>'+
+    '<div id="kwWrap" class="bg-white rounded-xl border border-slate-200 scroll" style="max-height:55vh"></div>'+
+    '<p id="kwNote" class="text-xs text-slate-400 text-center"></p></div>';
+  panel.innerHTML=h;
+  fillKw();
+  panel.querySelector("#btnExport").addEventListener("click",exportExcel);
+  const si=panel.querySelector("#search");
+  si.addEventListener("input",()=>{state.search=si.value;fillKw();});
+}
+function fillKw(){
+  const wrap=document.getElementById("kwWrap"); if(!wrap) return;
+  const rows=currentRows();
+  wrap.innerHTML=kwTableHTML(rows.map(x=>x.r),state.columns);
+  const cl=document.getElementById("countLabel");
+  if(cl) cl.textContent=Math.min(rows.length,PREVIEW).toLocaleString()+" / "+rows.length.toLocaleString()+" dòng";
+  const note=document.getElementById("kwNote");
+  if(note) note.textContent=rows.length>PREVIEW?("Xem trước "+PREVIEW+" dòng — xuất Excel vẫn đủ "+rows.length.toLocaleString()+" dòng."):"";
+}
+
+function renderSingleSheet(panel, i){
+  const r=state.result; const sh=r&&r.sheets[i];
+  if(!sh){ panel.innerHTML='<div class="text-slate-400 text-sm">Không tìm thấy sheet.</div>'; return; }
+  const c=COLOR[byKey(sh.tier).color];
+  const rows=sh.idxs.map(ix=>state.rows[ix]);
+  let h='<div class="space-y-2"><div class="flex items-center justify-between gap-2 flex-wrap"><div class="flex items-center gap-2">'+
+    '<span class="px-2 py-0.5 rounded-full text-xs font-medium '+c.badge+'">'+(sh.pri?'★ ':'')+byKey(sh.tier).col+'</span>'+
+    '<span class="font-semibold text-slate-800">'+esc(sh.name)+'</span>'+
+    '<span class="text-sm text-slate-400">· '+rows.length.toLocaleString()+' KW · tab "'+esc(sh.sheetName)+'"</span></div>'+
+    '<button id="btnExport" class="bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium px-3 py-1.5 rounded-lg">⬇ Xuất Excel</button></div>';
+  if(!rows.length) h+='<div class="bg-white rounded-xl border border-slate-200 p-8 text-center text-slate-400 text-sm">Tab này chưa có KW nào khớp.</div>';
+  else { h+='<div class="bg-white rounded-xl border border-slate-200 scroll" style="max-height:55vh">'+kwTableHTML(rows,state.columns)+'</div>';
+    if(rows.length>PREVIEW) h+='<p class="text-xs text-slate-400 text-center">Xem trước '+PREVIEW+' dòng — xuất Excel vẫn đủ '+rows.length.toLocaleString()+' dòng.</p>'; }
+  h+='</div>';
+  panel.innerHTML=h;
+  const b=document.getElementById("btnExport"); if(b) b.addEventListener("click",exportExcel);
+}
+
+/* ============================ Global wiring ============================ */
+function wireGlobal(){
+  const drop=document.getElementById("drop");
+  if(drop){
+    const fi=document.getElementById("fileInput");
+    drop.addEventListener("click",()=>fi.click());
+    fi.addEventListener("change",e=>handleFile(e.target.files[0]));
+    drop.addEventListener("dragover",e=>e.preventDefault());
+    drop.addEventListener("drop",e=>{e.preventDefault();handleFile(e.dataTransfer.files[0]);});
+  }
+  const bc=document.getElementById("btnClassify"); if(bc) bc.addEventListener("click",runClassify);
+  const br=document.getElementById("btnReset"); if(br) br.addEventListener("click",resetAll);
+  const kc=document.getElementById("keyCol"); if(kc) kc.addEventListener("change",e=>{state.keyCol=e.target.value;state.result=null;state.map={priority:[],seasonal:[],product:[],function:[],recipient:[]};autoSuggestMap(false);render();});
+  document.querySelectorAll(".tabbtn").forEach(b=>b.addEventListener("click",()=>{state.active=b.dataset.tab;state.search="";render();}));
+  // Root KW ưu tiên bar
+  document.querySelectorAll(".pri-term").forEach(inp=>inp.addEventListener("input",()=>{state.map.priority[+inp.dataset.idx].term=inp.value;}));
+  document.querySelectorAll(".pri-group").forEach(sel=>sel.addEventListener("change",()=>{state.map.priority[+sel.dataset.idx].group=sel.value;render();}));
+  document.querySelectorAll(".pri-del").forEach(b=>b.addEventListener("click",()=>{state.map.priority.splice(+b.dataset.idx,1);render();}));
+  document.querySelectorAll(".pri-add").forEach(b=>b.addEventListener("click",()=>{state.map.priority.push({term:"",group:"product"});render();}));
+}
+
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Force | Select-Object Name; \"---GIT---\"; \\(Get-Command git -ErrorAction SilentlyContinue\\).Source; \"---GH---\"; \\(Get-Command gh -ErrorAction SilentlyContinue\\).Source; \"---VERCEL---\"; \\(Get-Command vercel -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(\"---\")",
+      "PowerShell(git config user.name)",
+      "PowerShell(git config user.email)",
+      "PowerShell(\"---GIT IDENTITY---\")"
+    ]
+  }
+}
